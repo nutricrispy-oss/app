@@ -310,11 +310,16 @@ async def calc_loan(data: LoanIn, user=Depends(get_current_user)):
 @api.get("/loans")
 async def list_loans(user=Depends(get_current_user)):
     docs = await db.loans.find({"user_id": user["id"]}).sort("created_at", -1).to_list(1000)
+    client_ids = list({l["client_id"] for l in docs})
+    clients = await db.clients.find(
+        {"id": {"$in": client_ids}},
+        {"_id": 0, "id": 1, "first_name": 1, "last_name": 1, "code": 1}
+    ).to_list(len(client_ids)) if client_ids else []
+    cmap = {c["id"]: c for c in clients}
     result = []
     for l in docs:
         clean(l)
-        c = await db.clients.find_one({"id": l["client_id"]}, {"_id": 0, "first_name": 1, "last_name": 1, "code": 1})
-        l["client"] = c
+        l["client"] = cmap.get(l["client_id"])
         result.append(l)
     return result
 
@@ -488,79 +493,102 @@ async def compute_stats(user_id: str):
     week_start = (date.today() - timedelta(days=date.today().weekday())).isoformat()
 
     clients_total = await db.clients.count_documents({"user_id": user_id})
-    loans = await db.loans.find({"user_id": user_id}).to_list(5000)
+    loans = await db.loans.find(
+        {"user_id": user_id},
+        {"_id": 0, "id": 1, "client_id": 1, "capital": 1, "interest": 1, "status": 1, "renewed_from": 1, "additional_capital": 1}
+    ).to_list(5000)
     active_loans = [l for l in loans if l["status"] == "activo"]
     active_clients = len({l["client_id"] for l in active_loans})
     capital_lent = sum(l["capital"] for l in active_loans)
     total_granted = sum(l["capital"] for l in loans)
 
+    loan_ids = [l["id"] for l in loans]
     installs = await db.installments.find(
-        {"loan_id": {"$in": [l["id"] for l in loans]}}).to_list(50000)
-    pending_amount = sum((i["amount"] - i["paid_amount"]) for i in installs
-                        if i["status"] in ("pendiente", "pago parcial"))
-    overdue = [i for i in installs if i["status"] in ("pendiente", "pago parcial") and i["due_date"] < today]
-    overdue_count = len(overdue)
+        {"loan_id": {"$in": loan_ids}},
+        {"_id": 0, "loan_id": 1, "amount": 1, "paid_amount": 1, "status": 1, "due_date": 1}
+    ).to_list(50000) if loan_ids else []
+    loan_by_id = {l["id"]: l for l in loans}
+    pending_amount = 0
+    overdue_count = 0
     late_clients_ids = set()
-    for i in overdue:
-        loan = next((l for l in loans if l["id"] == i["loan_id"]), None)
-        if loan: late_clients_ids.add(loan["client_id"])
+    for i in installs:
+        if i["status"] in ("pendiente", "pago parcial"):
+            pending_amount += (i["amount"] - i["paid_amount"])
+            if i["due_date"] < today:
+                overdue_count += 1
+                loan = loan_by_id.get(i["loan_id"])
+                if loan: late_clients_ids.add(loan["client_id"])
 
-    payments = await db.payments.find({"user_id": user_id}).to_list(50000)
-    def pdate(p): return p["created_at"][:10]
-    collected_today = sum(p["amount"] for p in payments if pdate(p) == today)
-    collected_month = sum(p["amount"] for p in payments if pdate(p) >= month_start)
-    collected_week = sum(p["amount"] for p in payments if pdate(p) >= week_start)
+    payments = await db.payments.find(
+        {"user_id": user_id},
+        {"_id": 0, "loan_id": 1, "amount": 1, "created_at": 1}
+    ).to_list(50000)
+    collected_today = 0; collected_week = 0; collected_month = 0
+    payments_by_loan = {}
+    for p in payments:
+        pd = p["created_at"][:10]
+        if pd == today: collected_today += p["amount"]
+        if pd >= week_start: collected_week += p["amount"]
+        if pd >= month_start: collected_month += p["amount"]
+        payments_by_loan[p["loan_id"]] = payments_by_loan.get(p["loan_id"], 0) + p["amount"]
     interest_collected = 0
     for l in loans:
-        stats = 0
-        loan_payments = sum(p["amount"] for p in payments if p["loan_id"] == l["id"])
-        if loan_payments > l["capital"]:
-            interest_collected += min(loan_payments - l["capital"], l["interest"])
+        lp = payments_by_loan.get(l["id"], 0)
+        if lp > l["capital"]:
+            interest_collected += min(lp - l["capital"], l.get("interest", 0))
 
     renewals = [l for l in loans if l.get("renewed_from")]
     renewals_count = len(renewals)
     renewals_amount = sum(l.get("additional_capital", 0) for l in renewals)
 
-    expenses = await db.expenses.find({"user_id": user_id}).to_list(5000)
+    expenses = await db.expenses.find(
+        {"user_id": user_id},
+        {"_id": 0, "amount": 1, "date": 1}
+    ).to_list(5000)
     exp_month = sum(e["amount"] for e in expenses if e["date"] >= month_start)
-    withdrawals = await db.withdrawals.find({"user_id": user_id}).to_list(5000)
+    withdrawals = await db.withdrawals.find(
+        {"user_id": user_id},
+        {"_id": 0, "amount": 1, "date": 1}
+    ).to_list(5000)
     with_month = sum(w["amount"] for w in withdrawals if w["date"] >= month_start)
 
     total_collected = sum(p["amount"] for p in payments)
     available_balance = total_collected - sum(l["capital"] for l in loans) - sum(e["amount"] for e in expenses) - sum(w["amount"] for w in withdrawals) + sum(l["capital"] for l in loans if l["status"] != "activo")
 
     return {
-        "clients_total": clients_total,
-        "active_clients": active_clients,
-        "active_loans": len(active_loans),
-        "capital_lent": capital_lent,
-        "total_granted": total_granted,
-        "pending_amount": pending_amount,
-        "collected_today": collected_today,
-        "collected_week": collected_week,
-        "collected_month": collected_month,
-        "interest_collected": interest_collected,
-        "renewals_count": renewals_count,
-        "renewals_amount": renewals_amount,
-        "expenses_month": exp_month,
-        "withdrawals_month": with_month,
-        "available_balance": available_balance,
-        "overdue_count": overdue_count,
-        "late_clients_count": len(late_clients_ids),
+        "stats": {
+            "clients_total": clients_total,
+            "active_clients": active_clients,
+            "active_loans": len(active_loans),
+            "capital_lent": capital_lent,
+            "total_granted": total_granted,
+            "pending_amount": pending_amount,
+            "collected_today": collected_today,
+            "collected_week": collected_week,
+            "collected_month": collected_month,
+            "interest_collected": interest_collected,
+            "renewals_count": renewals_count,
+            "renewals_amount": renewals_amount,
+            "expenses_month": exp_month,
+            "withdrawals_month": with_month,
+            "available_balance": available_balance,
+            "overdue_count": overdue_count,
+            "late_clients_count": len(late_clients_ids),
+        },
+        "payments": payments,
     }
 
 @api.get("/dashboard")
 async def dashboard(user=Depends(get_current_user)):
-    stats = await compute_stats(user["id"])
-    # 7-day collections trend
+    result = await compute_stats(user["id"])
     trend = []
     today = date.today()
-    payments = await db.payments.find({"user_id": user["id"]}).to_list(50000)
+    payments = result["payments"]
     for i in range(6, -1, -1):
         d = (today - timedelta(days=i)).isoformat()
         total = sum(p["amount"] for p in payments if p["created_at"][:10] == d)
         trend.append({"date": d, "amount": total})
-    return {**stats, "trend_7d": trend}
+    return {**result["stats"], "trend_7d": trend}
 
 @api.get("/cash/today")
 async def cash_today(user=Depends(get_current_user)):
@@ -609,21 +637,29 @@ async def reports(
     if client_id: lq["client_id"] = client_id
     if modality: lq["modality"] = modality
     if status: lq["status"] = status
+    if from_date or to_date:
+        rng = {}
+        if from_date: rng["$gte"] = from_date
+        if to_date: rng["$lte"] = to_date + "T23:59:59"
+        lq["created_at"] = rng
     loans = await db.loans.find(lq).to_list(5000)
-    if from_date: loans = [l for l in loans if l["created_at"][:10] >= from_date]
-    if to_date: loans = [l for l in loans if l["created_at"][:10] <= to_date]
 
-    payments = await db.payments.find({"user_id": user["id"]}).to_list(50000)
-    if from_date: payments = [p for p in payments if p["created_at"][:10] >= from_date]
-    if to_date: payments = [p for p in payments if p["created_at"][:10] <= to_date]
+    pq = {"user_id": user["id"]}
+    if from_date or to_date:
+        rng = {}
+        if from_date: rng["$gte"] = from_date
+        if to_date: rng["$lte"] = to_date + "T23:59:59"
+        pq["created_at"] = rng
+    payments = await db.payments.find(pq).to_list(50000)
 
-    expenses = await db.expenses.find({"user_id": user["id"]}).to_list(5000)
-    if from_date: expenses = [e for e in expenses if e["date"] >= from_date]
-    if to_date: expenses = [e for e in expenses if e["date"] <= to_date]
-
-    withdrawals = await db.withdrawals.find({"user_id": user["id"]}).to_list(5000)
-    if from_date: withdrawals = [w for w in withdrawals if w["date"] >= from_date]
-    if to_date: withdrawals = [w for w in withdrawals if w["date"] <= to_date]
+    eq = {"user_id": user["id"]}
+    if from_date or to_date:
+        rng = {}
+        if from_date: rng["$gte"] = from_date
+        if to_date: rng["$lte"] = to_date
+        eq["date"] = rng
+    expenses = await db.expenses.find(eq).to_list(5000)
+    withdrawals = await db.withdrawals.find(eq).to_list(5000)
 
     return {
         "loans": [clean(l) for l in loans],
@@ -642,17 +678,26 @@ async def reports(
 async def overdue_list(user=Depends(get_current_user)):
     today = date.today().isoformat()
     loans = await db.loans.find({"user_id": user["id"], "status": "activo"}).to_list(5000)
+    loan_ids = [l["id"] for l in loans]
+    if not loan_ids:
+        return []
+    all_overdue = await db.installments.find({
+        "loan_id": {"$in": loan_ids},
+        "status": {"$in": ["pendiente", "pago parcial"]},
+        "due_date": {"$lt": today}
+    }, {"_id": 0, "loan_id": 1, "amount": 1, "paid_amount": 1}).to_list(50000)
+    by_loan = {}
+    for i in all_overdue:
+        by_loan.setdefault(i["loan_id"], []).append(i)
+    client_ids = list({l["client_id"] for l in loans if l["id"] in by_loan})
+    clients = await db.clients.find({"id": {"$in": client_ids}}, {"_id": 0}).to_list(len(client_ids)) if client_ids else []
+    cmap = {c["id"]: c for c in clients}
     result = []
     for l in loans:
-        overdue = await db.installments.find({
-            "loan_id": l["id"],
-            "status": {"$in": ["pendiente", "pago parcial"]},
-            "due_date": {"$lt": today}
-        }).to_list(100)
-        if overdue:
-            c = await db.clients.find_one({"id": l["client_id"]}, {"_id": 0})
+        if l["id"] in by_loan:
+            overdue = by_loan[l["id"]]
             result.append({
-                "loan_id": l["id"], "client": c,
+                "loan_id": l["id"], "client": cmap.get(l["client_id"]),
                 "overdue_count": len(overdue),
                 "overdue_amount": sum(i["amount"] - i["paid_amount"] for i in overdue),
             })

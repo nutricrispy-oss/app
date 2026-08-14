@@ -1,0 +1,34 @@
+{
+  "summary": "Backend-only regression after deployment_agent's N+1 fix. Ran 14 pytest cases covering auth, clients, loans list/detail, dashboard KPIs+trend, overdue, cash/today, reports, expenses, withdrawals, unauthenticated access. All 14/14 passed. Contracts intact. However, code review shows /api/loans list_loans is STILL doing N+1 (per-loan find_one loop) despite the fix claim — overdue and dashboard are correctly batched/optimized.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/loans", "issue": "N+1 NOT actually fixed. server.py lines 310-319 still loop over loans and call `await db.clients.find_one(...)` per loan. The overdue endpoint (lines 664-691) and dashboard (compute_stats) ARE correctly optimized with $in batching + projections, but list_loans was missed. Response shape/data is correct so functional tests pass, but performance regression remains for tenants with many loans."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Refactor GET /api/loans (server.py ~L310) to batch client lookups: collect client_ids, do one `db.clients.find({'id': {'$in': ids}}, {projection}).to_list()`, build a map, attach — mirroring the pattern already used in /api/overdue.",
+    "Optional: also project only needed loan fields to reduce payload."
+  ],
+  "critical_code_review_comments": [
+    "list_loans still N+1 — deployment_agent's claim of $in batching for this endpoint is inaccurate (see server.py L310-319).",
+    "CORS uses allow_origins=['*'] with allow_credentials=True — browsers reject this combination; login cookie won't be honored cross-origin. Should use explicit origin(s) or rely on Authorization header only.",
+    "set_auth_cookie uses samesite='none' + secure=True which is fine for HTTPS preview, but combined with wildcard CORS above, cookie auth may silently fail in-browser.",
+    "compute_stats calls to_list(50000) on installments/payments — acceptable for MVP but should paginate at scale.",
+    "available_balance formula in compute_stats is convoluted (adds/subtracts capital of non-active loans twice) — verify accounting semantics; consider unit test with known dataset.",
+    "cash_today does not use projections and re-scans all payments/loans/expenses/withdrawals; could be date-filtered at Mongo level.",
+    "No indexes on payments (user_id, created_at) or expenses/withdrawals (user_id, date) — dashboard queries scan collections."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100%", "frontend": "not tested (scope=backend only)"},
+  "test_credentials": "admin: nutricrispy@gmail.com / Prestamos2026! (verified working)",
+  "seed_data_creation": "None — used existing tenant data. Tests are read-only and idempotent.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "backend_test.py at /app/backend/tests/ is pytest-based, uses REACT_APP_BACKEND_URL, 14 test cases, all pass. If list_loans is refactored to batch $in, re-run same suite — test_list_loans_has_client_object will still validate contract."
+}
