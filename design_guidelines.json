@@ -1,0 +1,133 @@
+{
+  "theme": "light",
+  "archetype": "Earthy Authority (Trust + Swiss Brutalist Clarity)",
+  "typography": {
+    "strategy": "The 'Old Money Tech' - Sturdy, highly legible, optimized for numeric data and dense tables.",
+    "fonts": {
+      "headings": {
+        "family": "Cabinet Grotesk",
+        "weights": ["700", "900"],
+        "usage": "H1-H4, KPI primary numbers, Dashboard titles"
+      },
+      "body": {
+        "family": "IBM Plex Sans",
+        "weights": ["400", "500", "600"],
+        "usage": "Tables, client lists, transaction histories, input fields"
+      },
+      "mono": {
+        "family": "IBM Plex Mono",
+        "weights": ["500"],
+        "usage": "Account numbers, transaction IDs, specific technical labels"
+      }
+    },
+    "scale": {
+      "h1": "text-4xl md:text-5xl tracking-tight leading-none",
+      "h2": "text-2xl md:text-3xl tracking-tight leading-tight",
+      "h3": "text-xl md:text-2xl font-semibold",
+      "kpi_value": "text-3xl md:text-4xl font-black tracking-tighter",
+      "body": "text-base leading-relaxed",
+      "table_cell": "text-sm tabular-nums",
+      "overline": "text-xs font-bold uppercase tracking-[0.15em]"
+    }
+  },
+  "colors": {
+    "background": {
+      "default": "#FAFAFA",
+      "paper": "#FFFFFF",
+      "subtle": "#F4F4F5"
+    },
+    "foreground": {
+      "default": "#09090B",
+      "muted": "#71717A"
+    },
+    "primary": {
+      "DEFAULT": "#064E3B",
+      "foreground": "#FFFFFF",
+      "hover": "#042F2E",
+      "description": "Deep Forest Green. Represents wealth, stability, and trust."
+    },
+    "accent": {
+      "DEFAULT": "#991B1B",
+      "foreground": "#FFFFFF",
+      "description": "Rust/Terracotta for expenses, arrears, and negative balances."
+    },
+    "border": "#E4E4E7",
+    "status": {
+      "success": "#15803D",
+      "warning": "#B45309",
+      "destructive": "#991B1B",
+      "info": "#0369A1"
+    }
+  },
+  "visual_enhancers": {
+    "borders": "1px crisp solid borders (border-border). Avoid soft, blurry borders.",
+    "radius": "Subtle roundness. Use 'rounded-md' (6px) or 'rounded-sm' (4px) universally. Avoid excessive pill shapes except for status badges.",
+    "shadows": "Minimalist. 'shadow-sm' for cards, 'shadow-md' for dropdowns. Avoid large ambient shadows. Rely on borders for definition.",
+    "surfaces": "Flat solid colors only. NO glassmorphism. Financial data requires 100% optical clarity and high contrast.",
+    "icons": "Use Phosphor Icons (@phosphor-icons/react) with 'duotone' or 'regular' weight for a professional, high-end feel."
+  },
+  "layouts": {
+    "strategy": "Mobile-First High Density Dashboard",
+    "dashboard_grid": "grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6",
+    "kpi_cards": "col-span-1",
+    "main_chart": "col-span-1 md:col-span-2 lg:col-span-3 min-h-[300px]",
+    "side_panel": "col-span-1 md:col-span-2 lg:col-span-1",
+    "spacing": "Generous outer padding (p-4 mobile, p-8 desktop). Tight internal padding for tables and lists to maximize data density."
+  },
+  "responsive": {
+    "breakpoint": "Mobile-first. Design for 320px-430px first, then scale up using Tailwind md: and lg: prefixes.",
+    "navigation": "Desktop: Collapsible Sidebar (w-64 to w-16). Mobile: Fixed Bottom Navigation Bar with 4-5 primary icons (Inicio, Clientes, Nuevo, Cobros, Menú).",
+    "tables": "On mobile, convert dense tables into stacked cards (List view). Keep tables for desktop/tablet only. NEVER force horizontal scroll on primary data if it can be stacked.",
+    "modals": "On desktop: standard centered Dialog. On mobile: Full-screen Slide-over (Sheet) or Bottom Sheet to maximize tap space.",
+    "tap_targets": "All interactive elements (buttons, row items) MUST be at least 44x44px on mobile.",
+    "overflow_guard": "Ensure `overflow-x-hidden` on main wrapper to prevent horizontal scrolling on mobile."
+  },
+  "components": {
+    "buttons": "Large, full-width on mobile for key actions ('COBRAR CUOTA', 'NUEVO PRÉSTAMO'). Solid primary color, sharp radius.",
+    "cards": "White background (`bg-white`), 1px neutral border, subtle shadow. Title in uppercase overline style, main value in massive bold font.",
+    "tables": "Shadcn Table. Dense rows. ALL numeric columns (amounts) MUST be text-right aligned. Status columns should use colored dot badges.",
+    "charts": "Recharts. Line charts for income/expense trends. Bar charts for cash flow. Use primary green and accent red.",
+    "forms": "Shadcn Forms. Labels left-aligned above inputs. Required asterisks in red. Confirmations (Alert Dialog) REQUIRED before submitting payments or cancellations."
+  },
+  "motion": {
+    "hover": "Subtle background shifts (e.g., hover:bg-zinc-50) and slight translation (hover:-translate-y-[1px]).",
+    "page_transition": "Simple fade in. No complex staggers for financial tools.",
+    "interactive": "Active states must have visible scale down (active:scale-[0.98])."
+  },
+  "accessibility": {
+    "contrast": "APCA/WCAG AA compliant. Text on primary buttons must be white. Avoid light grey text on white.",
+    "testing": "All interactive elements (buttons, inputs, menu items, table rows) MUST include `data-testid` in kebab-case."
+  },
+  "data_formatting": {
+    "currency": "Paraguayan Guaraníes (Gs.). ALWAYS format with thousand separators (dots) and NO decimals. Example: 'Gs. 1.500.000'.",
+    "dates": "DD/MM/YYYY format globally."
+  },
+  "media": {
+    "images": {
+      "login_background": {
+        "url": "https://images.unsplash.com/photo-1614595737476-42487331b8a1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2MTJ8MHwxfHNlYXJjaHwyfHxtaW5pbWFsaXN0JTIwbW9kZXJuJTIwYXJjaGl0ZWN0dXJlJTIwYnVpbGRpbmd8ZW58MHx8fHwxNzg2NjY1NTM4fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Minimalist modern architecture. Use as a half-screen or background for the login/register page to imply structure, wealth, and stability."
+      }
+    }
+  },
+  "instructions_to_main_agent": [
+    "This is a financial application. Prioritize clarity, speed, and accuracy over flashy visuals.",
+    "ALWAYS format currency as Gs. with dot separators (e.g., Gs. 5.000.000). Never use decimals.",
+    "Implement a Mobile-first bottom navigation bar. Financial collectors use this app on the streets. Large tap targets for 'Cobrar' (Collect) are critical.",
+    "Use Phosphor Icons (yarn add @phosphor-icons/react) for all icons.",
+    "Do NOT use glassmorphism or transparent overlays for data containers. Use solid #FFFFFF with crisp 1px borders.",
+    "In tables, always right-align monetary values so users can easily compare digits.",
+    "Use standard HTML/Tailwind for layouts, but rely on Shadcn for interactive components (Select, Dialog, Form, Table).",
+    "Before critical actions (Payment, Cancellation, Renewal), trigger a Shadcn Alert Dialog for confirmation.",
+    "Integrate WhatsApp sharing using a simple link format (https://wa.me/?text=...).",
+    "For PDF generation, ensure the layout is printer-friendly (black and white, clear typography)."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Do not converge toward generic outputs. Ensure layered design elements with z-index hierarchy.",
+    "Do NOT apply 'transition: all'. Target specific properties.",
+    "Do NOT center align the app container (.App { text-align: center; }).",
+    "NEVER use emoji characters for icons.",
+    "Use sonner for toast notifications.",
+    "Provide micro-animations for interactions (hover, focus, active)."
+  ]
+}

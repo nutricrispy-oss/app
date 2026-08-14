@@ -1,0 +1,39 @@
+{
+  "summary": "First-finish smoke test for prestamos MVP. Backend auth + core CRUD + calculator + loan create/pay + dashboard + cash + reports verified via curl. Frontend login, dashboard (15 KPIs + chart), clientes list/dialog, nuevo prestamo calc, mobile bottom nav verified via Playwright. All core flows healthy.",
+  "tested_scope": ["frontend", "backend", "auth", "integration"],
+  "passed": [
+    "Backend: POST /api/auth/login returns user + token (field named 'token' not 'access_token')",
+    "Backend: GET /api/auth/me returns owner user with Bearer token",
+    "Backend: POST /api/clients creates client with auto code C0001",
+    "Backend: GET /api/clients returns user-scoped list (count=1)",
+    "Backend: POST /api/loans/calculate returns interest=260000, total=1260000, installment_amount=28000, schedule=45 for capital=1M/26%/45/diario (matches spec exactly)",
+    "Backend: POST /api/loans persists loan with 45 installments; GET /api/loans/{id} returns {loan, client, installments, paid_amount, paid_count, overdue_count, pending_count, balance, payments}",
+    "Backend: POST /api/loans/{id}/pay with installment_id + amount=28000 accepted, payment record persisted",
+    "Backend: GET /api/dashboard returns 15 KPI fields (clients_total, active_clients, active_loans, capital_lent, total_granted, pending_amount, collected_today, collected_week, collected_month, interest_collected, renewals_count, renewals_amount, expenses_month, withdrawals_month, available_balance)",
+    "Backend: GET /api/cash/today returns {date, initial_balance, income, new_loans, renewals, expenses, withdrawals, final_balance}",
+    "Backend: GET /api/reports returns {loans, payments, expenses, withdrawals, totals}",
+    "Frontend: Login page renders, admin credentials login successfully, redirects to Dashboard with toast 'Bienvenido de vuelta'",
+    "Frontend: Dashboard shows 15 KPI cards with real data (Gs. formatting with dots) and 'Cobros últimos 7 días' chart",
+    "Frontend: /clientes lists C0001 Juan Perez; 'Nuevo cliente' dialog opens with c-first/c-last inputs visible",
+    "Frontend: /prestamos/nuevo shows nl-capital/nl-rate/nl-installments/nl-modality/nl-client controls; selecting client + capital=500000/rate=20/installments=20/modality=diario + Calcular renders resumen Capital Gs. 500.000, Interés Gs. 100.000, Total Gs. 600.000, Cuota Gs. 30.000 and cronograma table",
+    "Frontend: /reportes and /caja pages load with expected content",
+    "Frontend: Mobile viewport (390x844) shows bottom nav with Inicio / Clientes / Nuevo / Préstamos / Caja"
+  ],
+  "failed": [],
+  "action_items": [
+    "Note (non-blocking): Frontend routes are Spanish (/clientes, /prestamos/nuevo, /caja, /finanzas, /reportes, /configuracion, /prestamos/:id). The review_request referenced /clients and /loans/new which don't exist – update PRD/testing spec to reflect Spanish paths for future testing.",
+    "Note (non-blocking): Login response returns token in field 'token' (not 'access_token'). Update any docs referencing 'access_token'."
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true,
+  "not_tested_deferred_to_full_pass": [
+    "Partial payment (amount < cuota) status = 'pago parcial'",
+    "Cancelación anticipada endpoint + UI alert dialog",
+    "Renovación endpoint + UI dialog with capital adicional",
+    "Egresos & extracciones create + list via UI",
+    "Multi-tenant isolation (second user)",
+    "WhatsApp wa.me link and PDF print buttons",
+    "Configuración persistence after reload"
+  ]
+}

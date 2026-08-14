@@ -1,0 +1,71 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&family=Space+Grotesk:wght@500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 98%;
+    --foreground: 240 10% 4%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 4%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 4%;
+    --primary: 164 86% 16%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 6% 10%;
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 46%;
+    --accent: 0 71% 35%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 71% 35%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --ring: 164 86% 16%;
+    --chart-1: 164 86% 16%;
+    --chart-2: 0 71% 35%;
+    --chart-3: 30 80% 45%;
+    --chart-4: 200 80% 40%;
+    --chart-5: 260 60% 50%;
+    --radius: 0.375rem;
+  }
+}
+
+* { border-color: hsl(var(--border)); }
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  font-family: 'IBM Plex Sans', sans-serif;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+.font-display { font-family: 'Space Grotesk', 'Cabinet Grotesk', sans-serif; letter-spacing: -0.02em; }
+.font-mono { font-family: 'IBM Plex Mono', monospace; }
+
+.kpi-value { font-family: 'Space Grotesk', sans-serif; font-weight: 700; letter-spacing: -0.03em; }
+.tabular-nums { font-variant-numeric: tabular-nums; }
+
+.overline {
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: hsl(var(--muted-foreground));
+}
+
+/* Table */
+table { border-collapse: collapse; }
+
+/* Bottom nav safe area */
+.pb-safe { padding-bottom: env(safe-area-inset-bottom, 0); }
+
+/* Smooth micro-transitions */
+button, a, .transition-el {
+  transition-property: background-color, border-color, color, transform, box-shadow;
+  transition-duration: 150ms;
+}
