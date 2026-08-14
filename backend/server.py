@@ -703,6 +703,23 @@ async def overdue_list(user=Depends(get_current_user)):
             })
     return result
 
+@api.get("/admin/export-all")
+async def export_all(user=Depends(get_current_user)):
+    """Exporta todas las colecciones del usuario logueado como JSON descargable."""
+    from fastapi.responses import JSONResponse
+    collections = [
+        "users", "clients", "loans", "installments",
+        "expenses", "withdrawals", "cash_closes", "settings"
+    ]
+    data = {}
+    for coll_name in collections:
+        docs = await db[coll_name].find({}).to_list(length=None)
+        for d in docs:
+            d["_id"] = str(d["_id"])
+        data[coll_name] = docs
+    headers = {"Content-Disposition": "attachment; filename=backup-prestamos.json"}
+    return JSONResponse(content=data, headers=headers)
+
 @api.get("/")
 async def root():
     return {"status": "ok"}
