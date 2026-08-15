@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { Search, Plus } from "lucide-react";
 import { fmtDate } from "@/lib/format";
 
-const EMPTY = { first_name: "", last_name: "", document: "", phone: "", whatsapp: "", address: "", city: "", workplace: "", reference_name: "", reference_phone: "", notes: "" };
+const EMPTY = { first_name: "", last_name: "", alias: "", document: "", phone: "", whatsapp: "", address: "", city: "", workplace: "", reference_name: "", reference_phone: "", notes: "" };
 
 export default function Clients() {
   const [q, setQ] = useState("");
@@ -48,6 +48,7 @@ export default function Clients() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div><Label>Nombre *</Label><Input data-testid="c-first" value={form.first_name} onChange={upd("first_name")} /></div>
               <div><Label>Apellido *</Label><Input data-testid="c-last" value={form.last_name} onChange={upd("last_name")} /></div>
+              <div><Label>Alias / Sobrenombre</Label><Input data-testid="c-alias" value={form.alias} onChange={upd("alias")} /></div>
               <div><Label>Documento</Label><Input data-testid="c-doc" value={form.document} onChange={upd("document")} /></div>
               <div><Label>Teléfono</Label><Input data-testid="c-phone" value={form.phone} onChange={upd("phone")} /></div>
               <div><Label>WhatsApp</Label><Input data-testid="c-wa" value={form.whatsapp} onChange={upd("whatsapp")} placeholder="Ej: 595981..." /></div>

@@ -113,6 +113,7 @@ class SettingsIn(BaseModel):
 class ClientIn(BaseModel):
     first_name: str
     last_name: str
+    alias: Optional[str] = ""
     document: Optional[str] = ""
     phone: Optional[str] = ""
     whatsapp: Optional[str] = ""
