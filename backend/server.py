@@ -100,6 +100,14 @@ class ResetIn(BaseModel):
     token: str
     password: str
 
+class ProfileIn(BaseModel):
+    name: str
+    email: EmailStr
+
+class ChangePasswordIn(BaseModel):
+    current_password: str
+    new_password: str
+
 class SettingsIn(BaseModel):
     business_name: Optional[str] = ""
     owner_name: Optional[str] = ""
@@ -109,6 +117,7 @@ class SettingsIn(BaseModel):
     city: Optional[str] = ""
     currency: Optional[str] = "Gs."
     receipt_text: Optional[str] = ""
+    holidays: Optional[List[str]] = []
 
 class ClientIn(BaseModel):
     first_name: str
@@ -133,6 +142,7 @@ class LoanIn(BaseModel):
     modality: Literal["diario", "semanal", "quincenal", "mensual"]
     start_date: str  # YYYY-MM-DD
     first_due_date: str
+    skip_sundays: Optional[bool] = False
 
 class PaymentIn(BaseModel):
     installment_id: Optional[str] = None
@@ -150,6 +160,7 @@ class RenewIn(BaseModel):
     modality: Literal["diario", "semanal", "quincenal", "mensual"]
     start_date: str
     first_due_date: str
+    skip_sundays: Optional[bool] = False
 
 class ExpenseIn(BaseModel):
     concept: str
@@ -233,16 +244,61 @@ async def reset(data: ResetIn):
     await db.password_reset_tokens.update_one({"token": data.token}, {"$set": {"used": True}})
     return {"ok": True}
 
+@api.put("/auth/profile")
+async def update_profile(data: ProfileIn, user=Depends(get_current_user)):
+    new_email = data.email.lower()
+    if new_email != user["email"]:
+        existing = await db.users.find_one({"email": new_email})
+        if existing and existing["id"] != user["id"]:
+            raise HTTPException(400, "El correo ya está en uso")
+    await db.users.update_one({"id": user["id"]},
+                              {"$set": {"name": data.name, "email": new_email, "owner_name": data.name}})
+    return {"ok": True}
+
+@api.post("/auth/change-password")
+async def change_password(data: ChangePasswordIn, user=Depends(get_current_user)):
+    u = await db.users.find_one({"id": user["id"]})
+    if not u or not verify_pw(data.current_password, u["password_hash"]):
+        raise HTTPException(400, "Contraseña actual incorrecta")
+    await db.users.update_one({"id": user["id"]},
+                              {"$set": {"password_hash": hash_pw(data.new_password)}})
+    return {"ok": True}
+
 # ============ SETTINGS ============
 @api.get("/settings")
 async def get_settings(user=Depends(get_current_user)):
-    return {k: user.get(k, "") for k in
+    return {k: user.get(k, "" if k != "holidays" else []) for k in
             ["business_name", "owner_name", "phone", "whatsapp",
-             "address", "city", "currency", "receipt_text"]}
+             "address", "city", "currency", "receipt_text", "holidays"]}
 
 @api.put("/settings")
 async def update_settings(data: SettingsIn, user=Depends(get_current_user)):
-    await db.users.update_one({"id": user["id"]}, {"$set": data.model_dump()})
+    payload = data.model_dump()
+    old_holidays = set(user.get("holidays", []) or [])
+    new_holidays = set(payload.get("holidays", []) or [])
+    added = new_holidays - old_holidays
+    await db.users.update_one({"id": user["id"]}, {"$set": payload})
+    if added:
+        active_loans = await db.loans.find(
+            {"user_id": user["id"], "status": "activo"},
+            {"_id": 0, "id": 1, "skip_sundays": 1}
+        ).to_list(5000)
+        loan_by_id = {l["id"]: l for l in active_loans}
+        loan_ids = list(loan_by_id.keys())
+        if loan_ids:
+            affected = await db.installments.find({
+                "loan_id": {"$in": loan_ids},
+                "status": "pendiente",
+                "due_date": {"$in": list(added)},
+            }).to_list(5000)
+            for inst in affected:
+                loan = loan_by_id.get(inst["loan_id"])
+                if not loan: continue
+                skip = bool(loan.get("skip_sundays", False))
+                d = datetime.strptime(inst["due_date"], "%Y-%m-%d").date() + timedelta(days=1)
+                while d.isoformat() in new_holidays or (skip and d.weekday() == 6):
+                    d = d + timedelta(days=1)
+                await db.installments.update_one({"id": inst["id"]}, {"$set": {"due_date": d.isoformat()}})
     return {"ok": True}
 
 # ============ CLIENTS ============
@@ -287,25 +343,34 @@ async def update_client(cid: str, data: ClientIn, user=Depends(get_current_user)
 def modality_days(m: str) -> int:
     return {"diario": 1, "semanal": 7, "quincenal": 15, "mensual": 30}[m]
 
-def build_schedule(capital: float, rate: float, n: int, modality: str, first_due: str):
+def _next_valid_day(d, holidays_set, skip_sundays):
+    while d.isoformat() in holidays_set or (skip_sundays and d.weekday() == 6):
+        d = d + timedelta(days=1)
+    return d
+
+def build_schedule(capital: float, rate: float, n: int, modality: str, first_due: str,
+                   holidays=None, skip_sundays: bool = False):
+    holidays_set = set(holidays or [])
     interest = round(capital * rate / 100)
     total = capital + interest
     per = round(total / n)
     step = modality_days(modality)
-    d0 = datetime.strptime(first_due, "%Y-%m-%d").date()
+    d = datetime.strptime(first_due, "%Y-%m-%d").date()
     schedule = []
     for i in range(n):
-        due = d0 + timedelta(days=step * i)
+        d = _next_valid_day(d, holidays_set, skip_sundays)
         amount = per if i < n - 1 else (total - per * (n - 1))
-        schedule.append({"number": i + 1, "due_date": due.isoformat(),
+        schedule.append({"number": i + 1, "due_date": d.isoformat(),
                          "amount": amount, "status": "pendiente",
                          "paid_amount": 0, "paid_at": None})
+        d = d + timedelta(days=step)
     return interest, total, per, schedule
 
 @api.post("/loans/calculate")
 async def calc_loan(data: LoanIn, user=Depends(get_current_user)):
     interest, total, per, schedule = build_schedule(
-        data.capital, data.interest_rate, data.installments, data.modality, data.first_due_date)
+        data.capital, data.interest_rate, data.installments, data.modality, data.first_due_date,
+        user.get("holidays", []), data.skip_sundays)
     return {"interest": interest, "total": total, "installment_amount": per, "schedule": schedule}
 
 @api.get("/loans")
@@ -329,7 +394,8 @@ async def create_loan(data: LoanIn, user=Depends(get_current_user)):
     c = await db.clients.find_one({"id": data.client_id, "user_id": user["id"]})
     if not c: raise HTTPException(404, "Cliente no encontrado")
     interest, total, per, schedule = build_schedule(
-        data.capital, data.interest_rate, data.installments, data.modality, data.first_due_date)
+        data.capital, data.interest_rate, data.installments, data.modality, data.first_due_date,
+        user.get("holidays", []), data.skip_sundays)
     lid = new_id()
     for s in schedule:
         s["id"] = new_id()
@@ -340,6 +406,7 @@ async def create_loan(data: LoanIn, user=Depends(get_current_user)):
         "interest": interest, "total": total, "installment_amount": per,
         "installments_count": data.installments, "modality": data.modality,
         "start_date": data.start_date, "first_due_date": data.first_due_date,
+        "skip_sundays": bool(data.skip_sundays),
         "status": "activo", "paid_amount": 0, "renewed_from": None,
         "created_at": iso(now_utc()),
     }
@@ -440,7 +507,8 @@ async def renew_loan(lid: str, data: RenewIn, user=Depends(get_current_user)):
     await db.loans.update_one({"id": lid}, {"$set": {"status": "renovado"}})
     # Create new loan
     interest, total, per, schedule = build_schedule(
-        new_capital, data.interest_rate, data.installments, data.modality, data.first_due_date)
+        new_capital, data.interest_rate, data.installments, data.modality, data.first_due_date,
+        user.get("holidays", []), data.skip_sundays)
     new_lid = new_id()
     for s in schedule:
         s["id"] = new_id(); s["loan_id"] = new_lid
@@ -450,6 +518,7 @@ async def renew_loan(lid: str, data: RenewIn, user=Depends(get_current_user)):
         "interest": interest, "total": total, "installment_amount": per,
         "installments_count": data.installments, "modality": data.modality,
         "start_date": data.start_date, "first_due_date": data.first_due_date,
+        "skip_sundays": bool(data.skip_sundays),
         "status": "activo", "paid_amount": 0, "renewed_from": lid,
         "additional_capital": data.additional_capital,
         "created_at": iso(now_utc()),
@@ -704,22 +773,30 @@ async def overdue_list(user=Depends(get_current_user)):
             })
     return result
 
-@api.get("/admin/export-all")
-async def export_all(user=Depends(get_current_user)):
-    """Exporta todas las colecciones del usuario logueado como JSON descargable."""
+@api.get("/backup")
+async def backup(user=Depends(get_current_user)):
     from fastapi.responses import JSONResponse
-    collections = [
-        "users", "clients", "loans", "installments",
-        "expenses", "withdrawals", "cash_closes", "settings"
-    ]
-    data = {}
-    for coll_name in collections:
-        docs = await db[coll_name].find({}).to_list(length=None)
-        for d in docs:
-            d["_id"] = str(d["_id"])
-        data[coll_name] = docs
-    headers = {"Content-Disposition": "attachment; filename=backup-prestamos.json"}
-    return JSONResponse(content=data, headers=headers)
+    uid = user["id"]
+    loans = await db.loans.find({"user_id": uid}).to_list(50000)
+    for l in loans: l.pop("_id", None)
+    loan_ids = [l["id"] for l in loans]
+    clients = await db.clients.find({"user_id": uid}).to_list(50000)
+    for c in clients: c.pop("_id", None)
+    installments = await db.installments.find(
+        {"loan_id": {"$in": loan_ids}}).to_list(500000) if loan_ids else []
+    for i in installments: i.pop("_id", None)
+    payments = await db.payments.find({"user_id": uid}).to_list(500000)
+    for p in payments: p.pop("_id", None)
+    today = date.today().isoformat()
+    data = {
+        "exported_at": iso(now_utc()),
+        "user_email": user["email"],
+        "clients": clients, "loans": loans,
+        "installments": installments, "payments": payments,
+    }
+    return JSONResponse(content=data, headers={
+        "Content-Disposition": f"attachment; filename=backup-{today}.json"
+    })
 
 @api.get("/")
 async def root():

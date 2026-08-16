@@ -16,6 +16,7 @@ export default function NewLoan() {
   const [form, setForm] = useState({
     client_id: preSelected, capital: "", interest_rate: 26, installments: 30,
     modality: "diario", start_date: todayIso(), first_due_date: todayIso(),
+    skip_sundays: false,
   });
   const [preview, setPreview] = useState(null);
 
@@ -25,7 +26,7 @@ export default function NewLoan() {
 
   const calculate = async () => {
     try {
-      const payload = { ...form, capital: Number(form.capital), interest_rate: Number(form.interest_rate), installments: Number(form.installments) };
+      const payload = { ...form, capital: Number(form.capital), interest_rate: Number(form.interest_rate), installments: Number(form.installments), skip_sundays: !!form.skip_sundays };
       const { data } = await api.post("/loans/calculate", payload);
       setPreview(data);
     } catch (err) { toast.error(formatApiError(err.response?.data?.detail)); }
@@ -33,7 +34,7 @@ export default function NewLoan() {
 
   const confirm = async () => {
     try {
-      const payload = { ...form, capital: Number(form.capital), interest_rate: Number(form.interest_rate), installments: Number(form.installments) };
+      const payload = { ...form, capital: Number(form.capital), interest_rate: Number(form.interest_rate), installments: Number(form.installments), skip_sundays: !!form.skip_sundays };
       const { data } = await api.post("/loans", payload);
       toast.success("Préstamo creado");
       nav(`/prestamos/${data.id}`);
@@ -79,6 +80,15 @@ export default function NewLoan() {
               <SelectContent>{MODALITIES.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}</SelectContent>
             </Select>
           </div>
+          {form.modality === "diario" && (
+            <div className="flex items-center gap-2 pt-1">
+              <input type="checkbox" id="skip-sundays" data-testid="nl-skip-sundays"
+                checked={form.skip_sundays}
+                onChange={(e) => setForm((f) => ({ ...f, skip_sundays: e.target.checked }))}
+                className="h-4 w-4 rounded border-border" />
+              <label htmlFor="skip-sundays" className="text-sm select-none cursor-pointer">No cobrar domingos</label>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Fecha de entrega</Label>

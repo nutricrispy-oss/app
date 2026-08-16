@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogT
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { HandCoins, FileText, MessageCircle, RefreshCw, Ban } from "lucide-react";
+import { HandCoins, FileText, MessageCircle, RefreshCw, Ban, Share2 } from "lucide-react";
+import jsPDF from "jspdf";
 
 const STATUS_STYLE = {
   pagada: "bg-green-100 text-green-800",
@@ -70,6 +71,10 @@ export default function LoanDetail() {
     } catch (err) { toast.error(formatApiError(err.response?.data?.detail)); }
   };
 
+  const lastInst = data.installments && data.installments.length > 0
+    ? data.installments.reduce((m, i) => (i.number > m.number ? i : m), data.installments[0])
+    : null;
+
   const waMessage = () => {
     const phone = (client?.whatsapp || client?.phone || "").replace(/\D/g, "");
     const text = encodeURIComponent(
@@ -80,6 +85,8 @@ Interés: ${loan.interest_rate}%
 Total: ${fmtGs(loan.total)}
 Cuota: ${fmtGs(loan.installment_amount)}
 Modalidad: ${loan.modality}
+Fecha de inicio: ${fmtDate(loan.start_date)}
+Fecha estimada de cancelación: ${lastInst ? fmtDate(lastInst.due_date) : "-"}
 Cuotas pagadas: ${paid_count}
 Cuotas pendientes: ${pending_count}
 Total abonado: ${fmtGs(paid_amount)}
@@ -87,20 +94,111 @@ Saldo pendiente: ${fmtGs(balance)}`);
     window.open(`https://wa.me/${phone}?text=${text}`, "_blank");
   };
 
-  const printReceipt = () => {
-    const w = window.open("", "_blank");
-    const rows = installments.map(i => `<tr><td>${i.number}</td><td>${i.due_date}</td><td style="text-align:right">${fmtGs(i.amount)}</td><td style="text-align:right">${fmtGs(i.paid_amount)}</td><td>${i.status}</td></tr>`).join("");
-    w.document.write(`<html><head><title>Estado de cuenta</title>
-<style>body{font-family:sans-serif;padding:24px;color:#000}h1{margin:0}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #ddd;padding:6px;font-size:12px}</style></head><body>
-<h1>Estado de cuenta</h1>
-<p><b>Cliente:</b> ${client?.first_name} ${client?.last_name} (${client?.code})</p>
-<p><b>Capital:</b> ${fmtGs(loan.capital)} · <b>Interés:</b> ${loan.interest_rate}% · <b>Total:</b> ${fmtGs(loan.total)}</p>
-<p><b>Cuota:</b> ${fmtGs(loan.installment_amount)} · <b>Modalidad:</b> ${loan.modality} · <b>Inicio:</b> ${loan.start_date}</p>
-<p><b>Abonado:</b> ${fmtGs(paid_amount)} · <b>Saldo:</b> ${fmtGs(balance)}</p>
-<table><thead><tr><th>#</th><th>Vencimiento</th><th>Monto</th><th>Pagado</th><th>Estado</th></tr></thead><tbody>${rows}</tbody></table>
-<p style="margin-top:24px;font-size:12px;color:#666">Fecha: ${new Date().toLocaleString("es-PY")}</p>
-</body></html>`);
-    w.document.close(); w.focus(); w.print();
+  const buildPdf = async () => {
+    let settings = {};
+    try {
+      const { data: s } = await api.get("/settings");
+      settings = s || {};
+    } catch { /* ignore */ }
+    const doc = new jsPDF();
+    const pageW = doc.internal.pageSize.getWidth();
+    let y = 15;
+    doc.setFontSize(15); doc.setFont("helvetica", "bold");
+    doc.text(settings.business_name || "Estado de cuenta", 15, y); y += 6;
+    doc.setFontSize(9); doc.setFont("helvetica", "normal");
+    const headerLine = [settings.owner_name, settings.phone && `Tel: ${settings.phone}`, settings.city].filter(Boolean).join(" · ");
+    if (headerLine) { doc.text(headerLine, 15, y); y += 5; }
+    doc.setDrawColor(200); doc.line(15, y, pageW - 15, y); y += 5;
+
+    doc.setFontSize(12); doc.setFont("helvetica", "bold");
+    doc.text("Estado de cuenta", 15, y); y += 6;
+    doc.setFontSize(9); doc.setFont("helvetica", "normal");
+    doc.text(`Cliente: ${client.first_name} ${client.last_name}${client.alias ? ` (${client.alias})` : ""}   Código: ${client.code}`, 15, y); y += 4;
+    doc.text(`Documento: ${client.document || "-"}   Tel: ${client.phone || "-"}`, 15, y); y += 6;
+
+    const summary = [
+      ["Capital", fmtGs(loan.capital)],
+      ["Interés", `${loan.interest_rate}%  (${fmtGs(loan.interest)})`],
+      ["Total", fmtGs(loan.total)],
+      ["Cuota", `${fmtGs(loan.installment_amount)}  (${loan.modality})`],
+      ["Inicio", fmtDate(loan.start_date)],
+      ["Fin estimado", lastInst ? fmtDate(lastInst.due_date) : "-"],
+      ["Abonado", fmtGs(paid_amount)],
+      ["Saldo", fmtGs(balance)],
+      ["Cuotas", `${paid_count}/${loan.installments_count} pagadas · ${pending_count} pendientes`],
+    ];
+    summary.forEach(([k, v]) => {
+      doc.setFont("helvetica", "bold"); doc.text(`${k}:`, 15, y);
+      doc.setFont("helvetica", "normal"); doc.text(String(v), 45, y);
+      y += 4.5;
+    });
+    y += 3;
+
+    const today = todayIso();
+    const pending = data.installments.filter((i) => i.status === "pendiente" || i.status === "pago parcial");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+    doc.text(`Cuotas pendientes (${pending.length})`, 15, y); y += 5;
+    doc.setFontSize(8);
+    doc.setFillColor(240, 240, 240);
+    doc.rect(15, y - 3.5, pageW - 30, 5, "F");
+    doc.text("#", 17, y);
+    doc.text("Vencimiento", 28, y);
+    doc.text("Monto", 70, y);
+    doc.text("Pagado", 100, y);
+    doc.text("Estado", 135, y);
+    y += 4;
+    doc.setFont("helvetica", "normal");
+    pending.forEach((i) => {
+      if (y > 275) { doc.addPage(); y = 15; }
+      const status = i.status === "pendiente" && i.due_date < today ? "vencida" : i.status;
+      doc.text(String(i.number), 17, y);
+      doc.text(fmtDate(i.due_date), 28, y);
+      doc.text(fmtGs(i.amount), 70, y);
+      doc.text(fmtGs(i.paid_amount), 100, y);
+      doc.text(status, 135, y);
+      y += 4;
+    });
+    if (pending.length === 0) { doc.text("Sin cuotas pendientes.", 17, y); y += 4; }
+    y += 6;
+
+    if (settings.receipt_text) {
+      doc.setFontSize(8); doc.setFont("helvetica", "italic");
+      doc.text(settings.receipt_text, 15, y); y += 4;
+    }
+    doc.setFontSize(7); doc.setFont("helvetica", "normal"); doc.setTextColor(120);
+    doc.text(`Generado: ${new Date().toLocaleString("es-PY")}`, 15, y);
+    return doc;
+  };
+
+  const printReceipt = async () => {
+    try {
+      const doc = await buildPdf();
+      doc.save(`estado-${client.code}.pdf`);
+    } catch (err) {
+      toast.error("No se pudo generar el PDF");
+    }
+  };
+
+  const sharePdf = async () => {
+    try {
+      const doc = await buildPdf();
+      const blob = doc.output("blob");
+      const file = new File([blob], `estado-${client.code}.pdf`, { type: "application/pdf" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: "Estado de cuenta",
+            text: `Estado de cuenta de ${client.first_name} ${client.last_name}`,
+          });
+        } catch (e) { /* usuario canceló */ }
+      } else {
+        doc.save(`estado-${client.code}.pdf`);
+        toast.info("PDF descargado, adjuntalo manualmente al chat");
+      }
+    } catch (err) {
+      toast.error("No se pudo generar el PDF");
+    }
   };
 
   return (
@@ -114,6 +212,7 @@ Saldo pendiente: ${fmtGs(balance)}`);
         <div className="flex gap-2 flex-wrap">
           <Button variant="outline" onClick={waMessage} data-testid="btn-wa"><MessageCircle size={16} className="mr-1"/>WhatsApp</Button>
           <Button variant="outline" onClick={printReceipt} data-testid="btn-print"><FileText size={16} className="mr-1"/>PDF</Button>
+          <Button variant="outline" onClick={sharePdf} data-testid="btn-share"><Share2 size={16} className="mr-1"/>Compartir</Button>
         </div>
       </div>
 
