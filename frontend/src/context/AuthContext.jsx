@@ -33,11 +33,16 @@ export function AuthProvider({ children }) {
     return data.user;
   };
   const logout = async () => {
-    try { await api.post("/auth/logout"); } catch {}
+    // Preserve the token so the background revocation call can still send it
+    // (localStorage is cleared immediately for UX, and cross-origin cookies
+    // may not be attached on independent deployments).
+    const oldToken = localStorage.getItem("token");
     localStorage.removeItem("token");
     setUser(false);
-    // Hard replace to /login clears browser bfcache + history so back button
-    // cannot restore the protected view after logout.
+    try {
+      const cfg = oldToken ? { headers: { Authorization: `Bearer ${oldToken}` } } : {};
+      api.post("/auth/logout", null, cfg).catch(() => {});
+    } catch {}
     try { window.location.replace("/login"); } catch {}
   };
   const refreshUser = async () => {

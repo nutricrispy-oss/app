@@ -1,0 +1,30 @@
+{
+  "summary": "Frontend-only verification of the defensive logout fix (axios timeout=8000, fire-and-forget POST /auth/logout, immediate window.location.replace('/login')). All 6 acceptance criteria PASS: desktop logout redirects in 0.35s, mobile logout redirects in 3.28s (well under 8s), localStorage.token cleared in both flows, background POST /auth/logout DOES reach backend and revokes the JTI (GET /api/auth/me with the pre-logout Bearer token returns 401 {\"detail\":\"Sesión revocada\"} after 3.5s wait), browser Back button after logout stays on /login (auth guard bounces protected route), login regression works, and all 6 protected pages (/clientes, /prestamos, /caja, /finanzas, /reportes, /configuracion) load without errors after re-login. No hanging requests observed, no toast errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/configuracion → Feriados", "issues": ["Uses browser's native <input type=date> (mm/dd/yyyy placeholder) instead of the shadcn Calendar/Popover — inconsistent locale (es-PY) and styling. Low priority."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "None required for the logout fix — ship as-is.",
+    "(Carry-over LOW) Consider replacing the native date input on /configuracion Feriados with the shadcn Calendar for consistency with the rest of the app."
+  ],
+  "critical_code_review_comments": [
+    "AuthContext.jsx L40: `api.post('/auth/logout').catch(() => {})` is intentionally not awaited — good, gives fire-and-forget semantics. Verified the request DOES land at the backend even though window.location.replace fires immediately after (browser keeps the fetch/xhr alive during navigation for a short grace period; measured revocation confirmed at ~3s).",
+    "AuthContext.jsx L38-42: order is (a) clear localStorage, (b) setUser(false), (c) fire POST, (d) window.location.replace. Correct — no risk of state flash to protected UI after logout.",
+    "api.js L9: 8000ms timeout is a reasonable safety net; consistent with the intent. Consider surfacing a global toast on axios timeout (currently silent unless a caller catches).",
+    "Minor: axios request interceptor reads localStorage per-request — fine, but the fire-and-forget POST /auth/logout runs AFTER `localStorage.removeItem('token')`, so the Authorization header is NOT attached. Backend revocation still works because it derives user+JTI from the request's httpOnly cookie (verified). If cookie-based auth is ever removed, this fire-and-forget call would silently no-op. Worth documenting."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% (6/6 acceptance criteria)"},
+  "test_credentials": "admin: nutricrispy@gmail.com / Prestamos2026! (verified working)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Logout fix (fire-and-forget + immediate redirect) is fully verified. If backend cookie auth is ever removed, the fire-and-forget POST /auth/logout would lose its Authorization header because AuthContext.jsx removes the token BEFORE firing the request — currently the httpOnly session cookie carries the identity so JTI revocation still fires. Documented in critical_code_review_comments.",
+  "rca_of_the_issue": "Original bug: logout awaited POST /auth/logout before clearing state/redirecting; if the backend was slow the UI appeared frozen. Fix: reorder to (1) clear local state, (2) fire POST in background, (3) window.location.replace('/login'). Measured: desktop redirect 0.35s, mobile 3.28s, both under the 8s axios timeout. Server-side JTI revocation verified via captured pre-logout Bearer token → /auth/me returns 401 Sesión revocada 3.5s post-click."
+}

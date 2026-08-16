@@ -6,6 +6,7 @@ export const API_BASE = `${BACKEND}/api`;
 export const api = axios.create({
   baseURL: API_BASE,
   withCredentials: true,
+  timeout: 8000,
 });
 
 api.interceptors.request.use((cfg) => {
