@@ -16,6 +16,10 @@ export default function ResetPassword() {
   const onSubmit = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
+      if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+        toast.error("La contraseña debe tener al menos 8 caracteres, con al menos una letra y un número.");
+        return;
+      }
       await api.post("/auth/reset-password", { token, password });
       toast.success("Contraseña restablecida");
       nav("/login");
@@ -30,7 +34,7 @@ export default function ResetPassword() {
         <h2 className="font-display text-3xl font-bold">Nueva contraseña</h2>
         <div className="space-y-2">
           <Label>Contraseña nueva</Label>
-          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} />
+          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
         </div>
         <Button type="submit" className="w-full h-11" disabled={loading || !token}>Guardar</Button>
         <div className="text-sm text-center"><Link to="/login" className="text-primary hover:underline">Volver</Link></div>

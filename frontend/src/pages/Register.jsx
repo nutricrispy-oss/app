@@ -17,6 +17,10 @@ export default function Register() {
   const onSubmit = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
+      if (form.password.length < 8 || !/[A-Za-z]/.test(form.password) || !/\d/.test(form.password)) {
+        toast.error("La contraseña debe tener al menos 8 caracteres, con al menos una letra y un número.");
+        return;
+      }
       await register(form);
       toast.success("Cuenta creada");
       nav("/");
@@ -46,7 +50,7 @@ export default function Register() {
         </div>
         <div className="space-y-2">
           <Label>Contraseña</Label>
-          <Input data-testid="reg-password" type="password" value={form.password} onChange={upd("password")} required minLength={6} />
+          <Input data-testid="reg-password" type="password" value={form.password} onChange={upd("password")} required minLength={8} />
         </div>
         <Button type="submit" data-testid="reg-submit" className="w-full h-11" disabled={loading}>
           {loading ? "Creando…" : "Crear cuenta"}

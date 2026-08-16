@@ -55,7 +55,7 @@ export default function Layout({ children }) {
             className="flex items-center justify-center gap-2 w-full py-2.5 rounded-md bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90">
             <PlusCircle size={18} /> Nuevo Préstamo
           </Link>
-          <button onClick={async () => { await logout(); nav("/login"); }} data-testid="btn-logout"
+          <button onClick={async () => { await logout(); }} data-testid="btn-logout"
             className="mt-2 flex items-center justify-center gap-2 w-full py-2 text-sm text-muted-foreground hover:text-foreground">
             <LogOut size={16} /> Cerrar sesión
           </button>
@@ -72,7 +72,7 @@ export default function Layout({ children }) {
             </button>
             <div className="font-display font-bold">{user?.business_name || "Préstamos"}</div>
           </div>
-          <button onClick={async () => { await logout(); nav("/login"); }} data-testid="btn-logout-mobile" className="text-sm text-muted-foreground">
+          <button onClick={async () => { await logout(); }} data-testid="btn-logout-mobile" className="text-sm text-muted-foreground">
             <LogOut size={18} />
           </button>
         </header>

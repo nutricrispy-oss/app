@@ -36,6 +36,9 @@ export function AuthProvider({ children }) {
     try { await api.post("/auth/logout"); } catch {}
     localStorage.removeItem("token");
     setUser(false);
+    // Hard replace to /login clears browser bfcache + history so back button
+    // cannot restore the protected view after logout.
+    try { window.location.replace("/login"); } catch {}
   };
   const refreshUser = async () => {
     const { data } = await api.get("/auth/me");

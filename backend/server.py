@@ -9,6 +9,8 @@ import bcrypt
 import jwt
 import secrets
 import logging
+import re
+import httpx
 from datetime import datetime, timezone, timedelta, date
 from typing import List, Optional, Literal
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Response, Query
@@ -25,6 +27,14 @@ db = client[os.environ['DB_NAME']]
 JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALG = "HS256"
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+BREVO_API_KEY = os.environ.get('BREVO_API_KEY', '')
+EMAIL_FROM_NAME = os.environ.get('EMAIL_FROM_NAME', 'Ayuda Prest')
+EMAIL_FROM_ADDRESS = os.environ.get('EMAIL_FROM_ADDRESS', '')
+EMAIL_REPLY_TO = os.environ.get('EMAIL_REPLY_TO', '')
+
+PW_MIN_LEN = 8
+LOGIN_MAX_ATTEMPTS = 5
+LOGIN_WINDOW_MIN = 15
 
 app = FastAPI()
 api = APIRouter(prefix="/api")
@@ -48,9 +58,68 @@ def verify_pw(pw: str, h: str) -> bool:
     except Exception:
         return False
 
-def create_access(user_id: str, email: str) -> str:
-    return jwt.encode({"sub": user_id, "email": email, "type": "access",
+def create_access(user_id: str, email: str, jti: str) -> str:
+    return jwt.encode({"sub": user_id, "email": email, "type": "access", "jti": jti,
                        "exp": now_utc() + timedelta(days=7)}, JWT_SECRET, algorithm=JWT_ALG)
+
+def validate_password(pw: str):
+    if not isinstance(pw, str) or len(pw) < PW_MIN_LEN:
+        raise HTTPException(400, f"La contraseña debe tener al menos {PW_MIN_LEN} caracteres")
+    if not re.search(r"[A-Za-z]", pw) or not re.search(r"\d", pw):
+        raise HTTPException(400, "La contraseña debe incluir al menos una letra y un número")
+
+async def send_email(*, to: str, subject: str, html: str) -> bool:
+    if not BREVO_API_KEY or not EMAIL_FROM_ADDRESS:
+        logging.warning(f"[EMAIL DISABLED] Would send to {to}: {subject}")
+        return False
+    payload = {
+        "sender": {"name": EMAIL_FROM_NAME, "email": EMAIL_FROM_ADDRESS},
+        "to": [{"email": to}],
+        "subject": subject,
+        "htmlContent": html,
+    }
+    if EMAIL_REPLY_TO:
+        payload["replyTo"] = {"email": EMAIL_REPLY_TO}
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.post(
+                "https://api.brevo.com/v3/smtp/email",
+                headers={"api-key": BREVO_API_KEY, "content-type": "application/json"},
+                json=payload,
+            )
+        if r.status_code >= 400:
+            logging.error(f"Brevo error {r.status_code}: {r.text[:200]}")
+            return False
+        return True
+    except Exception as e:
+        logging.error(f"Brevo send exception: {e}")
+        return False
+
+async def create_session(user_id: str) -> str:
+    jti = new_id()
+    await db.sessions.insert_one({
+        "jti": jti, "user_id": user_id,
+        "created_at": iso(now_utc()),
+        "expires_at": iso(now_utc() + timedelta(days=7)),
+        "revoked_at": None,
+    })
+    return jti
+
+async def check_rate_limit(email: str):
+    cutoff = iso(now_utc() - timedelta(minutes=LOGIN_WINDOW_MIN))
+    count = await db.login_attempts.count_documents({
+        "email": email, "success": False, "created_at": {"$gte": cutoff}
+    })
+    if count >= LOGIN_MAX_ATTEMPTS:
+        raise HTTPException(429, f"Demasiados intentos fallidos. Esperá {LOGIN_WINDOW_MIN} minutos e intentá de nuevo.")
+
+async def record_login_attempt(email: str, success: bool, ip: str = ""):
+    await db.login_attempts.insert_one({
+        "email": email, "success": success, "ip": ip,
+        "created_at": iso(now_utc()),
+    })
+    if success:
+        await db.login_attempts.delete_many({"email": email, "success": False})
 
 def set_auth_cookie(response: Response, token: str):
     response.set_cookie("access_token", token, httponly=True, secure=True,
@@ -66,16 +135,23 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(401, "No autenticado")
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
-        user = await db.users.find_one({"id": payload["sub"]})
-        if not user:
-            raise HTTPException(401, "Usuario no encontrado")
-        user.pop("_id", None)
-        user.pop("password_hash", None)
-        return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(401, "Token expirado")
     except jwt.InvalidTokenError:
         raise HTTPException(401, "Token inválido")
+    jti = payload.get("jti")
+    if not jti:
+        raise HTTPException(401, "Sesión inválida")
+    session = await db.sessions.find_one({"jti": jti})
+    if not session or session.get("revoked_at"):
+        raise HTTPException(401, "Sesión revocada")
+    user = await db.users.find_one({"id": payload["sub"]})
+    if not user:
+        raise HTTPException(401, "Usuario no encontrado")
+    user.pop("_id", None)
+    user.pop("password_hash", None)
+    user["_jti"] = jti
+    return user
 
 def clean(doc):
     if doc:
@@ -179,6 +255,7 @@ class WithdrawalIn(BaseModel):
 # ============ AUTH ROUTES ============
 @api.post("/auth/register")
 async def register(data: RegisterIn, response: Response):
+    validate_password(data.password)
     email = data.email.lower()
     if await db.users.find_one({"email": email}):
         raise HTTPException(400, "El correo ya está registrado")
@@ -192,30 +269,40 @@ async def register(data: RegisterIn, response: Response):
         "role": "owner", "created_at": iso(now_utc()),
     }
     await db.users.insert_one(user)
-    token = create_access(uid, email)
+    jti = await create_session(uid)
+    token = create_access(uid, email, jti)
     set_auth_cookie(response, token)
     user.pop("password_hash", None)
     user.pop("_id", None)
     return {"user": user, "token": token}
 
 @api.post("/auth/login")
-async def login(data: LoginIn, response: Response):
+async def login(data: LoginIn, request: Request, response: Response):
     email = data.email.lower()
+    await check_rate_limit(email)
+    ip = request.client.host if request.client else ""
     user = await db.users.find_one({"email": email})
     if not user or not verify_pw(data.password, user["password_hash"]):
+        await record_login_attempt(email, False, ip)
         raise HTTPException(401, "Credenciales inválidas")
-    token = create_access(user["id"], email)
+    await record_login_attempt(email, True, ip)
+    jti = await create_session(user["id"])
+    token = create_access(user["id"], email, jti)
     set_auth_cookie(response, token)
     user.pop("_id", None); user.pop("password_hash", None)
     return {"user": user, "token": token}
 
 @api.post("/auth/logout")
-async def logout(response: Response):
+async def logout(response: Response, user=Depends(get_current_user)):
+    jti = user.get("_jti")
+    if jti:
+        await db.sessions.update_one({"jti": jti}, {"$set": {"revoked_at": iso(now_utc())}})
     response.delete_cookie("access_token", path="/")
     return {"ok": True}
 
 @api.get("/auth/me")
 async def me(user=Depends(get_current_user)):
+    user.pop("_jti", None)
     return user
 
 @api.post("/auth/forgot-password")
@@ -227,13 +314,31 @@ async def forgot(data: ForgotIn):
             "token": tok, "user_id": user["id"],
             "expires_at": iso(now_utc() + timedelta(hours=1)),
             "used": False,
+            "created_at": iso(now_utc()),
         })
-        # Log the reset link (in prod send email)
-        print(f"[PASSWORD RESET] {FRONTEND_URL}/reset-password?token={tok}")
-    return {"ok": True, "message": "Si el correo existe, se enviaron instrucciones."}
+        reset_url = f"{FRONTEND_URL}/reset-password?token={tok}"
+        html = f"""<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#333">
+  <h2 style="color:#064E3B;margin:0 0 12px">Restablecer tu contraseña</h2>
+  <p>Hola,</p>
+  <p>Recibimos una solicitud para restablecer la contraseña de tu cuenta en <b>{EMAIL_FROM_NAME}</b>. Si fuiste vos, hacé clic en el botón para elegir una nueva contraseña. El enlace vence en 1 hora y solo puede usarse una vez.</p>
+  <p style="margin:24px 0;text-align:center"><a href="{reset_url}" style="background:#064E3B;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block">Restablecer contraseña</a></p>
+  <p style="color:#555;font-size:13px">Si el botón no funciona, copiá este enlace en tu navegador:<br><a href="{reset_url}" style="color:#064E3B;word-break:break-all">{reset_url}</a></p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+  <p style="color:#888;font-size:12px">Si no solicitaste este cambio, ignorá este correo. Tu contraseña actual sigue siendo válida.</p>
+  <p style="color:#888;font-size:12px">— {EMAIL_FROM_NAME}</p>
+</div>"""
+        sent = await send_email(
+            to=user["email"],
+            subject=f"Restablecer tu contraseña – {EMAIL_FROM_NAME}",
+            html=html,
+        )
+        if not sent:
+            logging.warning(f"[RESET FALLBACK] {reset_url}")
+    return {"ok": True, "message": "Si el correo corresponde a una cuenta registrada, recibirás un enlace."}
 
 @api.post("/auth/reset-password")
 async def reset(data: ResetIn):
+    validate_password(data.password)
     rec = await db.password_reset_tokens.find_one({"token": data.token, "used": False})
     if not rec:
         raise HTTPException(400, "Token inválido")
@@ -242,6 +347,10 @@ async def reset(data: ResetIn):
     await db.users.update_one({"id": rec["user_id"]},
                               {"$set": {"password_hash": hash_pw(data.password)}})
     await db.password_reset_tokens.update_one({"token": data.token}, {"$set": {"used": True}})
+    await db.sessions.update_many(
+        {"user_id": rec["user_id"], "revoked_at": None},
+        {"$set": {"revoked_at": iso(now_utc())}}
+    )
     return {"ok": True}
 
 @api.put("/auth/profile")
@@ -260,8 +369,13 @@ async def change_password(data: ChangePasswordIn, user=Depends(get_current_user)
     u = await db.users.find_one({"id": user["id"]})
     if not u or not verify_pw(data.current_password, u["password_hash"]):
         raise HTTPException(400, "Contraseña actual incorrecta")
+    validate_password(data.new_password)
     await db.users.update_one({"id": user["id"]},
                               {"$set": {"password_hash": hash_pw(data.new_password)}})
+    await db.sessions.update_many(
+        {"user_id": user["id"], "revoked_at": None, "jti": {"$ne": user.get("_jti")}},
+        {"$set": {"revoked_at": iso(now_utc())}}
+    )
     return {"ok": True}
 
 # ============ SETTINGS ============
@@ -847,6 +961,10 @@ async def startup():
     await db.clients.create_index([("user_id", 1), ("code", 1)])
     await db.loans.create_index([("user_id", 1), ("client_id", 1)])
     await db.installments.create_index([("loan_id", 1), ("number", 1)])
+    await db.sessions.create_index("jti", unique=True)
+    await db.sessions.create_index("user_id")
+    await db.login_attempts.create_index([("email", 1), ("created_at", -1)])
+    await db.password_reset_tokens.create_index("token", unique=True)
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@example.com").lower()
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")

@@ -1,0 +1,41 @@
+{
+  "summary": "Verified auth security overhaul: BUG #1 (logout server-side JTI revocation) and BUG #2 (forgot-password real Brevo email + reset flow) both work end-to-end. 12/12 backend pytest tests pass in /app/backend/tests/test_auth_security.py. Playwright confirmed logout redirects to /login and browser Back button does NOT restore protected page (window.location.replace + auth guard). Forgot-password page shows neutral 'Si el correo corresponde...' message. Brevo logs confirm real HTTP 201 Created responses to https://api.brevo.com/v3/smtp/email. Rate limit 5→429 verified; successful login clears counter. HttpOnly + Secure + SameSite=None cookie verified on /api/auth/login. Full regression flow (login→client→loan→pay→dashboard) still passes.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Register.jsx", "issue": "Password input has HTML attribute minLength={6} but the real backend/JS policy is 8 chars. Browsers show native tooltip 'lengthen to 6 characters' before the JS validation toast can fire. Set minLength={8} to match policy.", "selector": "[data-testid=\"reg-password\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth_security.py",
+    "/app/test_reports/pytest/auth_security.xml"
+  ],
+  "action_items": [
+    "Optional: change /app/frontend/src/pages/Register.jsx line 53 minLength={6} -> minLength={8} for consistency with policy."
+  ],
+  "critical_code_review_comments": [
+    "server.py L947-954: CORSMiddleware uses allow_credentials=True with allow_origins=['*'] AND allow_origin_regex='.*'. Spec-wise browsers reject wildcard + credentials. Cookie-based auth relies on this being permissive for the preview host; works today because starlette echoes back the request Origin when regex matches, but pin an explicit origin list for production.",
+    "server.py L124-126: set_auth_cookie uses samesite='none' + secure=True. Good for cross-origin, but on http:// dev this cookie is silently dropped. Frontend also stores JWT in localStorage so Bearer works — dual-path is fine.",
+    "server.py L128-154 get_current_user: correctly checks JTI and revoked_at. Session lookup is per-request DB call — acceptable but consider a short cache if scale grows.",
+    "server.py L295-301 logout: does not require the *matching* session to be active — will still 200 if user re-uses a token that was already revoked (Depends re-validates so this is fine). OK.",
+    "server.py L308-337 forgot: correctly neutral response regardless of whether user exists (no timing side-channel on Brevo call because it's awaited inside the `if user:` branch — small timing gap possible; acceptable).",
+    "server.py L339-354 reset: revokes all outstanding sessions after password change. Good.",
+    "server.py L108-122 rate-limit: counts failed attempts in a rolling 15-min window, successful login deletes the failed rows. Works. Minor: no IP-based limit (only email), so attacker can enumerate users across different emails from same IP without a global brake.",
+    "server.py L279-293 login: `check_rate_limit` runs BEFORE password verification (good — prevents bypass) but is silent for legit users who mistype 5×. Consider CAPTCHA or exponential backoff response header."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_auth_security.py"
+  ],
+  "success_rate": {"backend": "100% (12/12 auth-security + prior regressions unaffected)", "frontend": "100% (logout+back-button, forgot-pw, register-weak-pw all verified)"},
+  "test_credentials": "admin: nutricrispy@gmail.com / Prestamos2026! (unchanged, verified working at end of run)",
+  "seed_data_creation": "Temporary users with prefix test_rl_* and TEST_reset_* were created for rate-limit and reset-password tests. Login-attempts documents for these emails were cleaned in-test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Auth security suite lives at /app/backend/tests/test_auth_security.py (12 tests, all green). It hits Brevo — expect a real email to nutricrispy@gmail.com per full run. Existing regressions in /app/backend/tests/backend_test.py and /app/backend/tests/test_new_features.py continue to work. Frontend logout uses window.location.replace so Playwright must reload after logout to assert.",
+  "rca_of_the_issue": "BUG #1 root cause was that JWT-only auth had no server-side session store, so logout was a client-side no-op. Fix: JTI claim in token + db.sessions collection + revoked_at timestamp checked in get_current_user. Verified working. BUG #2 root cause was that forgot-password only logged to console. Fix: real httpx POST to Brevo /v3/smtp/email with API key from env. Verified via backend log 'HTTP/1.1 201 Created'."
+}
