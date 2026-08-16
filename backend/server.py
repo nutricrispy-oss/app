@@ -278,27 +278,53 @@ async def update_settings(data: SettingsIn, user=Depends(get_current_user)):
     new_holidays = set(payload.get("holidays", []) or [])
     added = new_holidays - old_holidays
     await db.users.update_one({"id": user["id"]}, {"$set": payload})
-    if added:
-        active_loans = await db.loans.find(
-            {"user_id": user["id"], "status": "activo"},
-            {"_id": 0, "id": 1, "skip_sundays": 1}
-        ).to_list(5000)
-        loan_by_id = {l["id"]: l for l in active_loans}
-        loan_ids = list(loan_by_id.keys())
-        if loan_ids:
-            affected = await db.installments.find({
-                "loan_id": {"$in": loan_ids},
-                "status": "pendiente",
-                "due_date": {"$in": list(added)},
-            }).to_list(5000)
-            for inst in affected:
-                loan = loan_by_id.get(inst["loan_id"])
-                if not loan: continue
-                skip = bool(loan.get("skip_sundays", False))
-                d = datetime.strptime(inst["due_date"], "%Y-%m-%d").date() + timedelta(days=1)
-                while d.isoformat() in new_holidays or (skip and d.weekday() == 6):
-                    d = d + timedelta(days=1)
-                await db.installments.update_one({"id": inst["id"]}, {"$set": {"due_date": d.isoformat()}})
+    if not added:
+        return {"ok": True}
+
+    active_loans = await db.loans.find(
+        {"user_id": user["id"], "status": "activo"},
+        {"_id": 0, "id": 1, "skip_sundays": 1, "modality": 1}
+    ).to_list(5000)
+    loan_by_id = {l["id"]: l for l in active_loans}
+    if not loan_by_id:
+        return {"ok": True}
+
+    # Find loans with any pending installment falling on a newly added holiday
+    hits = await db.installments.find({
+        "loan_id": {"$in": list(loan_by_id.keys())},
+        "status": "pendiente",
+        "due_date": {"$in": list(added)},
+    }, {"_id": 0, "loan_id": 1}).to_list(5000)
+    affected_loan_ids = {h["loan_id"] for h in hits}
+
+    for lid in affected_loan_ids:
+        loan = loan_by_id[lid]
+        skip = bool(loan.get("skip_sundays", False))
+        step = modality_days(loan["modality"])
+        pending = await db.installments.find(
+            {"loan_id": lid, "status": "pendiente"}
+        ).sort("number", 1).to_list(5000)
+        # Find first pending installment landing on a newly added holiday
+        start_idx = next((i for i, inst in enumerate(pending)
+                          if inst["due_date"] in added), None)
+        if start_idx is None:
+            continue
+        prev_date = None
+        if start_idx > 0:
+            prev_date = datetime.strptime(
+                pending[start_idx - 1]["due_date"], "%Y-%m-%d").date()
+        for i in range(start_idx, len(pending)):
+            inst = pending[i]
+            if prev_date is None:
+                d = datetime.strptime(inst["due_date"], "%Y-%m-%d").date()
+            else:
+                d = prev_date + timedelta(days=step)
+            while d.isoformat() in new_holidays or (skip and d.weekday() == 6):
+                d = d + timedelta(days=1)
+            if d.isoformat() != inst["due_date"]:
+                await db.installments.update_one(
+                    {"id": inst["id"]}, {"$set": {"due_date": d.isoformat()}})
+            prev_date = d
     return {"ok": True}
 
 # ============ CLIENTS ============
