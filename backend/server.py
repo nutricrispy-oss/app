@@ -944,11 +944,24 @@ async def root():
 
 app.include_router(api)
 
+def _cors_origins():
+    origins = set()
+    fu = os.environ.get("FRONTEND_URL", "").strip()
+    if fu:
+        origins.add(fu)
+    origins.add("http://localhost:3000")
+    extra = os.environ.get("CORS_ORIGINS", "").strip()
+    if extra and extra != "*":
+        for o in extra.split(","):
+            o = o.strip()
+            if o:
+                origins.add(o)
+    return sorted(origins)
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=["*"],
-    allow_origin_regex=".*",
+    allow_origins=_cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )

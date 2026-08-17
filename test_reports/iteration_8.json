@@ -1,0 +1,28 @@
+{
+  "summary": "Verified CORS fix at FastAPI level via direct 127.0.0.1:8001 probes (bypassing Cloudflare edge). Code + .env are correct; allowed origin gets echoed with credentials, evil origin returns 400 with no ACAO. Backend regression (login, forgot-password, protected endpoints) via public URL all pass. Frontend browser flow (login -> dashboard -> forgot-password) works without any CORS errors.",
+  "verifications": {
+    "code_grep": "server.py:947 has `def _cors_origins():` and line 964 has `allow_origins=_cors_origins()`. No `allow_origins=['*']` and no `allow_origin_regex='.*'` present.",
+    "env": "CORS_ORIGINS=\"\" (empty), FRONTEND_URL=\"https://loanpro-19.preview.emergentagent.com\"",
+    "direct_probe_allowed_origin": "OPTIONS http://127.0.0.1:8001/api/auth/login with Origin=https://loanpro-19.preview.emergentagent.com -> 200 OK, access-control-allow-origin: https://loanpro-19.preview.emergentagent.com (exact echo), access-control-allow-credentials: true, vary: Origin. PASS.",
+    "direct_probe_evil_origin": "OPTIONS http://127.0.0.1:8001/api/auth/login with Origin=https://evil.example.com -> 400 Bad Request 'Disallowed CORS origin', NO access-control-allow-origin header. PASS.",
+    "public_url_login": "POST /api/auth/login via public URL returns 200, sets httpOnly access_token cookie (Secure; SameSite=None; Partitioned). PASS.",
+    "public_url_forgot_password": "POST /api/auth/forgot-password returns neutral message: {\"ok\":true,\"message\":\"Si el correo corresponde a una cuenta registrada, recibirás un enlace.\"}. PASS.",
+    "public_url_protected": "GET /api/auth/me and /api/clients with cookie jar return 200 with user + clients payload. PASS.",
+    "frontend_browser": "Login form -> POST /api/auth/login 200 -> redirected to /, dashboard 'Resumen del negocio' rendered with real data; navigated to /forgot-password page loads. 0 CORS errors in console."
+  },
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "CORS config is now correct and safe: explicit allowlist (FRONTEND_URL + localhost:3000) with allow_credentials=True. No regex wildcard.",
+    "Note: Preview environment's Cloudflare/ingress layer may still expose wildcard ACAO headers on the public URL. This is edge behavior and will not apply in the user's independent deployment. Confirmed via direct FastAPI probe."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin: nutricrispy@gmail.com / Prestamos2026! (from /app/memory/test_credentials.md context)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "CORS fix verified. Do NOT test CORS via public URL curl (Cloudflare masks headers). Use 127.0.0.1:8001 direct probe for CORS. Public URL is fine for functional regression."
+}
